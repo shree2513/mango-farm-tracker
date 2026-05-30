@@ -1,0 +1,11 @@
+# Mango Farm Tracker — Python dependencies
+# Install locally with: pip install -r requirements.txt
+# Streamlit Community Cloud installs these automatically on deploy.
+
+streamlit>=1.32.0
+streamlit-gsheets-connection>=0.0.5
+gspread>=5.12.0
+google-auth>=2.29.0
+google-api-python-client>=2.125.0
+pandas>=2.0.0
+Pillow>=10.0.0
