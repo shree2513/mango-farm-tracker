@@ -1,26 +1,23 @@
 """
 Mango Farm Tree Tracker
 =======================
-A mobile-friendly Streamlit app for logging the health and maintenance
-of 200 mango trees. Data saves directly to a Google Sheet.
-Photos are uploaded to a Google Drive folder and the link is stored in the sheet.
-
-Author: Built for family farm monitoring
-Usage: streamlit run app.py
+Mobile-friendly Streamlit app for logging 200 mango trees.
+Uses gspread to write directly to Google Sheets.
+Photos are uploaded to Google Drive.
 """
 
 import io
 import streamlit as st
 import pandas as pd
+import gspread
 from datetime import date
-from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 
 # ══════════════════════════════════════════════════════════
-# PAGE CONFIG  (must be the very first Streamlit call)
+# PAGE CONFIG
 # ══════════════════════════════════════════════════════════
 st.set_page_config(
     page_title="Mango Farm Tracker 🥭",
@@ -31,125 +28,102 @@ st.set_page_config(
 
 
 # ══════════════════════════════════════════════════════════
-# MOBILE-FRIENDLY CUSTOM CSS
+# MOBILE-FRIENDLY CSS
 # ══════════════════════════════════════════════════════════
-st.markdown(
-    """
-    <style>
-        /* ── Global font size boost for mobile ── */
-        html, body, [class*="css"] {
-            font-size: 17px;
-        }
+st.markdown("""
+<style>
+    html, body, [class*="css"] { font-size: 17px; }
 
-        /* ── Labels: bold & readable ── */
-        label, .stRadio > label > div,
-        .stSelectbox > label,
-        .stTextInput > label,
-        .stTextArea > label,
-        .stDateInput > label,
-        .stFileUploader > label {
-            font-size: 1.1rem !important;
-            font-weight: 700 !important;
-            color: #1b4332 !important;
-        }
+    label, .stRadio > label > div,
+    .stSelectbox > label, .stTextInput > label,
+    .stTextArea > label, .stDateInput > label,
+    .stFileUploader > label {
+        font-size: 1.1rem !important;
+        font-weight: 700 !important;
+        color: #1b4332 !important;
+    }
 
-        /* ── Radio button options ── */
-        .stRadio div[role="radiogroup"] label {
-            font-size: 1.15rem !important;
-            padding: 6px 0;
-        }
+    .stRadio div[role="radiogroup"] label {
+        font-size: 1.15rem !important;
+        padding: 6px 0;
+    }
 
-        /* ── Big green submit button ── */
-        div.stButton > button:first-child {
-            background-color: #1b4332;
-            color: #ffffff;
-            font-size: 1.35rem !important;
-            font-weight: 800 !important;
-            height: 3.8rem;
-            width: 100%;
-            border-radius: 14px;
-            border: none;
-            margin-top: 12px;
-            letter-spacing: 0.5px;
-            transition: background-color 0.2s ease;
-        }
-        div.stButton > button:first-child:hover {
-            background-color: #2d6a4f;
-            color: #ffffff;
-        }
+    div.stButton > button:first-child {
+        background-color: #1b4332;
+        color: #ffffff;
+        font-size: 1.35rem !important;
+        font-weight: 800 !important;
+        height: 3.8rem;
+        width: 100%;
+        border-radius: 14px;
+        border: none;
+        margin-top: 12px;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #2d6a4f;
+        color: #ffffff;
+    }
 
-        /* ── Input fields: larger touch targets ── */
-        input, textarea, select {
-            font-size: 1.05rem !important;
-            padding: 10px !important;
-        }
+    input, textarea, select {
+        font-size: 1.05rem !important;
+        padding: 10px !important;
+    }
 
-        /* ── Section divider ── */
-        hr { border-color: #b7e4c7; margin: 1.2rem 0; }
-
-        /* ── Success box ── */
-        .element-container .stAlert {
-            font-size: 1.1rem !important;
-        }
-
-        /* ── Page header ── */
-        h1 { color: #1b4332 !important; text-align: center; }
-        h3 { color: #2d6a4f !important; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    h1 { color: #1b4332 !important; text-align: center; }
+    h3 { color: #2d6a4f !important; }
+    hr { border-color: #b7e4c7; margin: 1.2rem 0; }
+</style>
+""", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
-# CONSTANTS
+# GOOGLE CREDENTIALS HELPER
 # ══════════════════════════════════════════════════════════
 
-# Name of the worksheet tab inside your Google Sheet.
-# Change this if your tab is named something else.
-WORKSHEET_NAME = "TreeLog"
-
-# Column names — these must match the headers in your Google Sheet exactly.
-COLUMNS = [
-    "Tree Number",
-    "Date",
-    "Status",
-    "Water Given",
-    "Water Notes",
-    "Chemical / Fertilizer",
-    "General Notes",
-    "Photo URL",
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
 ]
 
+def get_credentials():
+    """Build service account credentials from Streamlit secrets."""
+    return service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=SCOPES,
+    )
+
 
 # ══════════════════════════════════════════════════════════
-# GOOGLE DRIVE HELPER
+# GOOGLE SHEETS HELPER
+# ══════════════════════════════════════════════════════════
+
+def append_row_to_sheet(row_data: list):
+    """
+    Appends a single row to the TreeLog worksheet.
+    row_data must be a list matching the column order in your sheet.
+    """
+    creds = get_credentials()
+    client = gspread.authorize(creds)
+
+    sheet_id = st.secrets["spreadsheet_id"]
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.worksheet("TreeLog")
+
+    worksheet.append_row(row_data, value_input_option="USER_ENTERED")
+
+
+# ══════════════════════════════════════════════════════════
+# GOOGLE DRIVE PHOTO UPLOAD
 # ══════════════════════════════════════════════════════════
 
 def upload_photo_to_drive(photo_bytes: bytes, filename: str) -> str:
     """
-    Uploads a photo to the Google Drive folder specified in secrets.toml.
-    Uses the same service account credentials as the Sheets connection.
-
-    Args:
-        photo_bytes: Raw bytes of the image file.
-        filename:    What to name the file in Drive (e.g. "Tree_42_2025-06-01.jpg").
-
-    Returns:
-        A shareable Google Drive URL string, or an error message string.
+    Uploads a photo to the Google Drive folder in secrets.
+    Returns a shareable view URL.
     """
-    # Pull the service account info from Streamlit secrets.
-    # The keys in [connections.gsheets] are standard service-account JSON fields.
-    sa_info = dict(st.secrets["connections"]["gsheets"])
+    creds = get_credentials()
+    drive = build("drive", "v3", credentials=creds)
 
-    credentials = service_account.Credentials.from_service_account_info(
-        sa_info,
-        scopes=["https://www.googleapis.com/auth/drive"],
-    )
-
-    drive = build("drive", "v3", credentials=credentials)
-
-    # The Drive folder ID is stored separately in secrets.toml
     folder_id = st.secrets["drive_folder_id"]
 
     file_metadata = {
@@ -161,15 +135,15 @@ def upload_photo_to_drive(photo_bytes: bytes, filename: str) -> str:
         mimetype="image/jpeg",
         resumable=False,
     )
+    uploaded = drive.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id"
+    ).execute()
 
-    uploaded_file = (
-        drive.files()
-        .create(body=file_metadata, media_body=media, fields="id")
-        .execute()
-    )
-    file_id = uploaded_file.get("id")
+    file_id = uploaded.get("id")
 
-    # Grant public view access so anyone with the link can see the photo
+    # Make publicly viewable
     drive.permissions().create(
         fileId=file_id,
         body={"type": "anyone", "role": "reader"},
@@ -189,39 +163,25 @@ st.divider()
 
 
 # ══════════════════════════════════════════════════════════
-# GOOGLE SHEETS CONNECTION
-# ══════════════════════════════════════════════════════════
-
-# st.connection reads credentials from .streamlit/secrets.toml automatically.
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-
-# ══════════════════════════════════════════════════════════
 # DATA ENTRY FORM
 # ══════════════════════════════════════════════════════════
 
 with st.form("tree_log_form", clear_on_submit=True):
 
-    # ── 1. Tree Number ────────────────────────────────────
     tree_number = st.selectbox(
         "🌳 Tree Number",
         options=list(range(1, 201)),
         index=0,
-        help="Select the number painted on the tree trunk.",
+        help="Select the number on the tree tag.",
     )
 
-    # ── 2. Date ───────────────────────────────────────────
-    log_date = st.date_input(
-        "📅 Date of Update",
-        value=date.today(),
-    )
+    log_date = st.date_input("📅 Date of Update", value=date.today())
 
     st.divider()
 
-    # ── 3. Tree Status ────────────────────────────────────
     st.markdown("**🩺 Tree Status**")
     tree_status = st.radio(
-        "Tree Status",  # actual label (hidden by markdown above)
+        "Tree Status",
         options=["Healthy ✅", "Needs Attention ⚠️", "Dead ❌"],
         index=0,
         label_visibility="collapsed",
@@ -229,7 +189,6 @@ with st.form("tree_log_form", clear_on_submit=True):
 
     st.divider()
 
-    # ── 4. Water Details ──────────────────────────────────
     water_given = st.selectbox(
         "💧 Water Given Today",
         options=[
@@ -242,61 +201,55 @@ with st.form("tree_log_form", clear_on_submit=True):
     )
     water_notes = st.text_input(
         "Water Notes (optional)",
-        placeholder="e.g., Soil was very dry near the roots",
+        placeholder="e.g., Soil was very dry",
     )
 
     st.divider()
 
-    # ── 5. Chemical / Fertilizer ──────────────────────────
     chemical_details = st.text_input(
         "🧪 Chemical / Fertilizer Applied",
-        placeholder="e.g., Urea 50g, Neem oil spray, DAP 100g",
+        placeholder="e.g., Urea 50g, Neem oil spray",
     )
 
     st.divider()
 
-    # ── 6. Photo ──────────────────────────────────────────
     st.markdown("**📷 Photo of the Tree**")
     photo_method = st.radio(
         "Photo method",
-        options=["📸 Take a photo now (camera)", "🖼️ Upload from gallery"],
+        options=["📸 Take a photo now", "🖼️ Upload from gallery"],
         horizontal=True,
         label_visibility="collapsed",
     )
 
     photo_file = None
-    if "camera" in photo_method:
-        photo_file = st.camera_input(
-            "Point camera at the tree and tap the button"
-        )
+    if "Take" in photo_method:
+        photo_file = st.camera_input("Point camera at the tree")
     else:
         photo_file = st.file_uploader(
-            "Select a photo from your phone",
+            "Select photo",
             type=["jpg", "jpeg", "png"],
             label_visibility="collapsed",
         )
 
     st.divider()
 
-    # ── 7. General Notes ──────────────────────────────────
     general_notes = st.text_area(
         "📝 Any Other Notes",
-        placeholder="e.g., Leaves turning yellow, saw insects, branch broken...",
+        placeholder="e.g., Yellow leaves, insects, broken branch...",
         height=110,
     )
 
-    # ── 8. Submit Button ──────────────────────────────────
     submitted = st.form_submit_button("✅  Save Tree Update")
 
 
 # ══════════════════════════════════════════════════════════
-# FORM SUBMISSION LOGIC
+# SUBMISSION LOGIC
 # ══════════════════════════════════════════════════════════
 
 if submitted:
     with st.spinner("Saving your update, please wait..."):
 
-        # Step A: Upload photo to Google Drive (if one was provided)
+        # Upload photo to Drive
         photo_url = "No photo"
         if photo_file is not None:
             try:
@@ -304,56 +257,33 @@ if submitted:
                 photo_url = upload_photo_to_drive(photo_file.getvalue(), filename)
             except Exception as e:
                 photo_url = "Upload failed"
-                st.warning(
-                    f"⚠️ Photo could not be uploaded: {e}\n\n"
-                    "The rest of the update will still be saved."
-                )
+                st.warning(f"⚠️ Photo could not be uploaded: {e}\nThe rest will still be saved.")
 
-        # Step B: Build a one-row DataFrame for the new entry
-        new_row = pd.DataFrame(
-            [
-                {
-                    "Tree Number": int(tree_number),
-                    "Date": str(log_date),
-                    # Strip the emoji from status before saving
-                    "Status": tree_status.split(" ")[0],
-                    "Water Given": water_given,
-                    "Water Notes": water_notes.strip(),
-                    "Chemical / Fertilizer": chemical_details.strip(),
-                    "General Notes": general_notes.strip(),
-                    "Photo URL": photo_url,
-                }
-            ]
-        )
+        # Build row in the same order as your sheet columns:
+        # Tree Number | Date | Status | Water Given | Water Notes | Chemical | Notes | Photo URL
+        row = [
+            int(tree_number),
+            str(log_date),
+            tree_status.split(" ")[0],   # strips emoji
+            water_given,
+            water_notes.strip(),
+            chemical_details.strip(),
+            general_notes.strip(),
+            photo_url,
+        ]
 
-        # Step C: Read current sheet data, append new row, write back
         try:
-            existing_data = conn.read(
-                worksheet=WORKSHEET_NAME,
-                usecols=list(range(len(COLUMNS))),
-                ttl=1,  # 1-second cache so we always get the latest rows
-            )
-            # Remove any completely empty rows that Sheets sometimes adds
-            existing_data = existing_data.dropna(how="all")
-
-            updated_data = pd.concat(
-                [existing_data, new_row], ignore_index=True
-            )
-
-            conn.update(worksheet=WORKSHEET_NAME, data=updated_data)
-
-            # ── Success feedback ──────────────────────────
+            append_row_to_sheet(row)
             st.success(
                 f"✅ **Tree {tree_number} updated successfully!**\n\n"
-                f"Date: {log_date} | Status: {tree_status.split(' ')[0]}"
+                f"Date: {log_date}  |  Status: {tree_status.split(' ')[0]}"
             )
             st.balloons()
 
         except Exception as e:
             st.error(
-                f"❌ Could not save to Google Sheet.\n\n"
-                f"Error: {e}\n\n"
-                "Please check your internet connection and try again."
+                f"❌ Could not save to Google Sheet.\n\nError: {e}\n\n"
+                "Check your internet connection and try again."
             )
 
 
@@ -361,4 +291,4 @@ if submitted:
 # FOOTER
 # ══════════════════════════════════════════════════════════
 st.divider()
-st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")
+st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")
