@@ -291,4 +291,4 @@ if submitted:
 # FOOTER
 # ══════════════════════════════════════════════════════════
 st.divider()
-st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")
+st.caption("🥭 Mango Farm Tracker · Data saved to Google Sheets · Built for family farm")
