@@ -115,43 +115,23 @@ def append_row_to_sheet(row_data: list):
 # ══════════════════════════════════════════════════════════
 # GOOGLE DRIVE PHOTO UPLOAD
 # ══════════════════════════════════════════════════════════
+import base64
+import requests
 
-def upload_photo_to_drive(photo_bytes: bytes, filename: str) -> str:
-    """
-    Uploads a photo to the Google Drive folder in secrets.
-    Returns a shareable view URL.
-    """
-    creds = get_credentials()
-    drive = build("drive", "v3", credentials=creds)
-
-    folder_id = st.secrets["drive_folder_id"]
-
-    file_metadata = {
-        "name": filename,
-        "parents": [folder_id],
-    }
-    media = MediaIoBaseUpload(
-        io.BytesIO(photo_bytes),
-        mimetype="image/jpeg",
-        resumable=False,
+def upload_photo_to_imgbb(photo_bytes: bytes, filename: str) -> str:
+    """Uploads photo to ImgBB and returns the image URL."""
+    api_key = st.secrets["imgbb_api_key"]
+    image_base64 = base64.b64encode(photo_bytes).decode("utf-8")
+    response = requests.post(
+        "https://api.imgbb.com/1/upload",
+        data={
+            "key": api_key,
+            "image": image_base64,
+            "name": filename,
+        }
     )
-    uploaded = drive.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id"
-    ).execute()
-
-    file_id = uploaded.get("id")
-
-    # Make publicly viewable
-    drive.permissions().create(
-        fileId=file_id,
-        body={"type": "anyone", "role": "reader"},
-    ).execute()
-
-    return f"https://drive.google.com/file/d/{file_id}/view"
-
-
+    response.raise_for_status()
+    return response.json()["data"]["url"]
 # ══════════════════════════════════════════════════════════
 # APP HEADER
 # ══════════════════════════════════════════════════════════
@@ -250,7 +230,7 @@ if submitted:
     with st.spinner("Saving your update, please wait..."):
 
         # Upload photo to Drive
-        photo_url = "No photo"
+        photo_url = upload_photo_to_imgbb(photo_file.getvalue(), filename)
         if photo_file is not None:
             try:
                 filename = f"Tree_{tree_number}_{log_date}.jpg"
